@@ -18,6 +18,22 @@ import pytest
 from gateway import run_notifications
 from gateway.config import Platform
 from gateway.run import GatewayRunner
+
+
+def test_permanent_completion_refusal_settles_as_dropped(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "tools.async_delegation.drop_completion_delivery",
+        lambda delegation_id, claim_id: calls.append(("drop", delegation_id, claim_id)) or True,
+    )
+    monkeypatch.setattr(
+        "tools.async_delegation.release_completion_delivery",
+        lambda *args: calls.append(("release", *args)) or True,
+    )
+
+    runner = GatewayRunner.__new__(GatewayRunner)
+    runner._settle_durable_claim("drop", "deleg-1", "claim-1")
+    assert calls == [("drop", "deleg-1", "claim-1")]
 from tests.module_clock import install_module_clock
 from tools.process_registry import ProcessRegistry, ProcessSession
 
