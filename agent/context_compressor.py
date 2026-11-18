@@ -2851,6 +2851,8 @@ class ContextCompressor(
             return False
         if self.awaiting_real_usage_after_compression:
             return True
+        if rough_tokens > self._effective_input_window(self.context_length, self.max_tokens):
+            return False
         # Estimate magnitude is not evidence of overflow, even past the full window.
         # Let the provider adjudicate; its overflow error still triggers reactive recovery.
         if self.last_real_prompt_tokens >= self.threshold_tokens:

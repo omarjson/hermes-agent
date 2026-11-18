@@ -570,8 +570,9 @@ class TestPreflightDeferral:
         compressor.last_real_prompt_tokens = 90_000
         assert compressor.should_defer_preflight_to_real_usage(95_000) is False
         compressor.last_real_prompt_tokens = 50_000
-        for rough in (compressor.context_length, 150_000, 10_000_000):
-            assert compressor.should_defer_preflight_to_real_usage(rough) is True
+        assert compressor.should_defer_preflight_to_real_usage(compressor.context_length) is True
+        for rough in (150_000, 10_000_000):
+            assert compressor.should_defer_preflight_to_real_usage(rough) is False
         compressor.note_usage_less_response()
         assert compressor.should_defer_preflight_to_real_usage(95_000) is False
         compressor.update_from_response({"prompt_tokens": 50_000})
@@ -586,6 +587,13 @@ class TestPreflightDeferral:
         compressor.last_real_prompt_tokens = 120_000
         compressor.awaiting_real_usage_after_compression = True
         assert compressor.should_defer_preflight_to_real_usage(95_000) is True
+
+    def test_clear_over_window_plaintext_runs_preflight_without_usage_anchor(self, compressor):
+        compressor.context_length = 272_000
+        compressor.threshold_tokens = 204_000
+        compressor.last_real_prompt_tokens = 0
+        compressor.awaiting_real_usage_after_compression = False
+        assert compressor.should_defer_preflight_to_real_usage(1_200_037) is False
 
     def test_native_checkpoint_defers_until_provider_usage_reanchors(self, compressor):
         """A newly captured native checkpoint is opaque ciphertext whose serialized size can add
@@ -2281,7 +2289,7 @@ class TestUpdateModelResetsCalibration:
 
         comp.update_model("small-model", context_length=65_536)
         assert comp.last_real_prompt_tokens == 0
-        assert comp.should_defer_preflight_to_real_usage(comp.context_length + 5_000) is True
+        assert comp.should_defer_preflight_to_real_usage(comp.context_length + 5_000) is False
         comp.update_from_response({"prompt_tokens": comp.threshold_tokens + 1})
         assert comp.should_defer_preflight_to_real_usage(comp.context_length + 5_000) is False
 
