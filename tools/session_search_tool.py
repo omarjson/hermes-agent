@@ -363,6 +363,27 @@ def _title_match_result(persistence, query: str, current_lineage_root: Optional[
         "_lineage_root": lineage_root}
 
 
+def _cjk_retry_query(query: str) -> str | None:
+    """Build a bounded OR/bigram fallback for CJK queries after the exact FTS search misses."""
+    if any(token in query for token in ('"', ' OR ', ' NOT ', ' AND ', '*')):
+        return None
+    import re
+    runs = re.findall(r"[一-\u9fff\u3040-\u30ff\uac00-\ud7af]+", query)
+    if not runs:
+        return None
+    terms: list[str] = []
+    for run in runs:
+        run = re.sub(r"[？。！，、：；\s]+$", "", run)
+        for suffix in ("を教えてください", "教えてください", "について", "については", "は"):
+            if run.endswith(suffix) and len(run) > len(suffix):
+                run = run[:-len(suffix)]
+                break
+        if len(run) >= 2:
+            terms.extend(run[index:index + 2] for index in range(len(run) - 1))
+    terms = list(dict.fromkeys(term for term in terms if len(term) >= 2))[:24]
+    return " OR ".join(terms) if terms else None
+
+
 def _discover_payload(persistence, query: str, detail: str, results: list, **extra) -> str:
     """Discovery response; notes FTS backfill progress so the agent can explain thin
     results instead of treating them as ground truth."""
@@ -469,6 +490,17 @@ def _discover(persistence, query: str, role_filter: Optional[list[str]], limit: 
         fields=_DISCOVER_SEARCH_FIELDS, after_ts=after_ts, before_ts=before_ts), "FTS5 search failed: %s", "Search failed")
     if err:
         return err
+    if not raw_results and not title_result:
+        retry = _cjk_retry_query(query)
+        if retry:
+            raw_results, retry_err = _loud(lambda: persistence.search.search_messages(
+                query=retry, role_filter=role_filter or ["user", "assistant"],
+                exclude_sources=list(_HIDDEN_SESSION_SOURCES), limit=_DISCOVER_SCAN_LIMIT, offset=0,
+                sort=SearchSort(sort) if sort else SearchSort.RELEVANCE,
+                fields=_DISCOVER_SEARCH_FIELDS, after_ts=after_ts, before_ts=before_ts),
+                "FTS5 CJK retry failed: %s", "Search failed")
+            if retry_err:
+                return retry_err
     # Demote cron rows below interactive ones BEFORE dedup so a high-volume cron corpus
     # can't starve the user's own sessions out of the top `limit`; stable sort keeps BM25
     # order within each class.

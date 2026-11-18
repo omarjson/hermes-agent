@@ -21,12 +21,24 @@ from tests.fixtures.storage_holder import raw_holder
 from tests.fixtures.storage_seed import seed_messages, seed_session
 from tests.gateway.fixtures.storage_handles import close_storage_handles, storage_handle
 from tools.session_search_tool import (
+    _cjk_retry_query,
     _format_timestamp,
     _is_compacted_message,
     _resolve_to_parent,
     _session_link,
     session_search,
 )
+
+
+def test_cjk_retry_query_shortens_request_and_punctuation():
+    retry = _cjk_retry_query("明日の天気を教えてください")
+    assert retry is not None
+    assert " OR " in retry
+    assert "明日" in retry
+    assert "教えて" not in retry
+
+    assert _cjk_retry_query("weather tomorrow please") is None
+    assert _cjk_retry_query('"明日の天気"') is None
 
 
 @pytest.fixture
