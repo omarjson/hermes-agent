@@ -13,6 +13,7 @@ import sys
 import threading
 import time
 import uuid
+from copy import deepcopy
 from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Optional, Tuple
@@ -1305,6 +1306,7 @@ def build_turn_context(
     append_message(messages, user_msg)
     current_turn_user_idx = len(messages) - 1
     agent._persist_user_message_idx = current_turn_user_idx
+    agent._persist_user_message_original_content = deepcopy(user_msg.get("content"))
 
     agent._user_turn_count += 1
     # cache_ttl auto: a person's chat moves from 5m to 1h once this message ends its first pause past 5m.

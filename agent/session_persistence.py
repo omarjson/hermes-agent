@@ -502,6 +502,9 @@ class SessionPersistenceMixin:
         msg = messages[idx] if 0 <= idx < len(messages) else None
         if not (isinstance(msg, dict) and msg.get("role") == "user"):
             return
+        original = getattr(self, "_persist_user_message_original_content", None)
+        if original is not None and msg.get("content") != original:
+            override = None
         if _override_replaces_content(msg, msg.get("content"), override):
             msg["content"] = _content_with_turn_override(msg, msg.get("content"), override)
         if timestamp is not None:

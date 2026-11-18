@@ -791,6 +791,23 @@ class TestFlushCompressedSummaryOverrideGuard:
         finally:
             db.close()
 
+    def test_live_override_skipped_when_plugin_replaced_current_turn_row(self, tmp_path):
+        db = open_persistence(profile_scope(home=tmp_path))
+        sid = "sess-plugin-summary-live"
+        seed_session(db, sid, "cli")
+        try:
+            agent = self._make_agent(db, sid)
+            original = "actual question"
+            plugin_head = "[Recent Summary]\n\nactual question"
+            messages = [{"role": "user", "content": plugin_head}]
+            agent._persist_user_message_idx = 0
+            agent._persist_user_message_override = original
+            agent._persist_user_message_original_content = original
+            agent._apply_persist_user_message_override(messages)
+            assert messages[0]["content"] == plugin_head
+        finally:
+            db.close()
+
     def test_live_override_skipped_for_compression_merged_row(self, tmp_path):
         """Same invariant as the test above, for the in-memory path.
 

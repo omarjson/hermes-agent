@@ -551,6 +551,7 @@ _STREAM_STATE: dict[str, Any] = {
     "_persist_user_message_idx": None,
     "_persist_user_message_override": None,
     "_persist_user_message_timestamp": None,
+    "_persist_user_message_original_content": None,
     # Image-to-text fallbacks cached per payload/URL so one tool loop doesn't re-run vision.
     "_anthropic_image_fallback_cache": dict,
 }
@@ -745,6 +746,33 @@ def _explicit_client_kwargs(agent, api_key, base_url, _provider_timeout) -> dict
     return client_kwargs
 
 
+def _resolve_init_fallback(agent, fallback_model, _provider_timeout) -> Optional[dict[str, Any]]:
+    """Resolve a configured init fallback after primary credentials or client construction fail."""
+    from agent.auxiliary_client import resolve_provider_client
+    for _fb in _fallback_entries(fallback_model):
+        try:
+            from hermes_cli.fallback_config import resolve_entry_api_key
+            explicit_key = resolve_entry_api_key(_fb)
+            routed, model = resolve_provider_client(
+                _fb["provider"], model=_fb["model"], raw_codex=True,
+                explicit_base_url=_fb.get("base_url"), explicit_api_key=explicit_key,
+            )
+            if routed is None:
+                continue
+            agent._fallback_activated = True
+            if str(_fb["provider"]).strip().lower() == "moa":
+                from agent.moa_loop import bind_moa_runtime
+                bind_moa_runtime(agent, _fb["model"])
+                return None
+            agent.provider = agent.requested_provider = _fb["provider"]
+            agent.model = model or _fb["model"]
+            recompute_init_fallback_api_mode(agent, routed)
+            return _client_kwargs_from_routed(routed, _provider_timeout)
+        except Exception as exc:
+            logger.debug("Init-time fallback entry %s failed: %s", _fb.get("provider"), exc)
+    return None
+
+
 def _routed_client_kwargs(agent, fallback_model, _provider_timeout) -> Optional[dict[str, Any]]:
     """OpenAI-client kwargs via the centralized provider router (no explicit creds).
 
@@ -922,6 +950,18 @@ def _init_openai_client(agent, api_key, base_url, fallback_model, _provider_time
             _print_key_banner(client_kwargs.get("api_key", "none"), "API key",
                               warn_missing=warning_notifications_enabled(agent.platform))
     except Exception as e:
+        fallback_kwargs = _resolve_init_fallback(agent, fallback_model, _provider_timeout)
+        if fallback_kwargs is None and getattr(agent, "_fallback_activated", False):
+            return
+        if fallback_kwargs is not None:
+            try:
+                agent.client = agent._create_openai_client(fallback_kwargs, reason="fallback_init", shared=True)
+                agent.api_mode = "chat_completions"
+                if not agent.quiet_mode:
+                    print(f"🤖 AI Agent initialized with fallback model: {agent.model}")
+                return
+            except Exception as fallback_exc:
+                logger.debug("Fallback client construction failed: %s", fallback_exc)
         raise RuntimeError(f"Failed to initialize OpenAI client: {e}")
 
 
