@@ -33,6 +33,23 @@ def _origin_user_id(entry: dict) -> str:
     return str((entry.get("origin") or {}).get("user_id") or "")
 
 
+def _mirror_chat_id_aliases(platform: str, chat_id: str) -> tuple[str, ...]:
+    """Chat ids to try for origin lookup. WhatsApp aliases share one canonical identity."""
+    raw = str(chat_id or "").strip()
+    if not raw:
+        return ()
+    if platform.lower() != "whatsapp":
+        return (raw,)
+    try:
+        from gateway.whatsapp_identity import expand_whatsapp_aliases
+        aliases = expand_whatsapp_aliases(raw)
+        if aliases:
+            return tuple(sorted(aliases, key=lambda value: (len(value), value)))
+    except Exception:
+        pass
+    return (raw,)
+
+
 def mirror_to_session(
     platform: str, chat_id: str, message_text: str, source_label: str = "cli", thread_id: Optional[str] = None,
     user_id: Optional[str] = None, role: str = "assistant", session_id: Optional[str] = None,
@@ -88,13 +105,17 @@ def _find_session_id(platform: str, chat_id: str, thread_id: Optional[str] = Non
     before the sessions.json fallback, so a stale JSON entry never beats a live row.
     """
     probes = (str(thread_id),) if thread_id is not None else ("1", "", str(chat_id))
+    chat_ids = _mirror_chat_id_aliases(platform, chat_id)
     try:
         from persistence_assembly import open_persistence, profile_scope
         with open_persistence(profile_scope()) as store:
             for probe in probes:
-                session_id = store.routing.session_for_origin(platform=platform, chat_id=chat_id, thread_id=probe, user_id=user_id)
-                if session_id:
-                    return str(session_id)
+                for candidate in chat_ids:
+                    session_id = store.routing.session_for_origin(
+                        platform=platform, chat_id=candidate, thread_id=probe, user_id=user_id,
+                    )
+                    if session_id:
+                        return str(session_id)
     except Exception as e:
         logger.debug("Mirror state.db session lookup failed: %s", e)
 
@@ -115,10 +136,16 @@ def _find_session_id(platform: str, chat_id: str, thread_id: Optional[str] = Non
 def _find_in_sessions_index(data: dict, platform: str, chat_id: str, thread_id: str,
                             user_id: Optional[str]) -> Optional[str]:
     """One exact-thread lookup in the pre-migration ``sessions.json`` index."""
+    chat_ids = _mirror_chat_id_aliases(platform, chat_id)
+
     def _matches(entry: dict) -> bool:
         origin = entry.get("origin") or {}
+        origin_chat_id = str(origin.get("chat_id", ""))
+        same_chat = origin_chat_id in chat_ids
+        if platform.lower() == "whatsapp" and origin_chat_id:
+            same_chat = bool(set(chat_ids) & set(_mirror_chat_id_aliases(platform, origin_chat_id)))
         return ((origin.get("platform") or entry.get("platform", "")).lower() == platform.lower()
-                and str(origin.get("chat_id", "")) == str(chat_id)
+                and same_chat
                 and str(origin.get("thread_id") or "") == thread_id)
 
     # Keys starting with "_" (e.g. the gateway's "_README") are metadata sentinels.

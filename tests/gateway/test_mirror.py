@@ -29,6 +29,21 @@ def _setup_sessions(tmp_path, sessions_data):
 
 
 class TestFindSessionId:
+    def test_whatsapp_phone_and_lid_aliases_find_same_session(self, tmp_path, monkeypatch):
+        sessions_dir, index_file = _setup_sessions(tmp_path, {
+            "dm": {
+                "session_id": "sess-lid",
+                "origin": {"platform": "whatsapp", "chat_id": "200000000000001@lid"},
+                "updated_at": "2026-01-01",
+            }
+        })
+        monkeypatch.setattr(
+            "gateway.whatsapp_identity.expand_whatsapp_aliases",
+            lambda _value: {"15551234567", "200000000000001"},
+        )
+        with patch.object(mirror_mod, "_SESSIONS_INDEX", index_file):
+            assert _find_session_id("whatsapp", "15551234567@s.whatsapp.net") == "sess-lid"
+
     def test_finds_matching_session(self, tmp_path):
         sessions_dir, index_file = _setup_sessions(tmp_path, {
             "agent:main:telegram:dm": {
